@@ -3,7 +3,7 @@ from .lstm_custom import LSTMTextEncoder
 from .transformer_encoder import TransformerTextEncoder
 
 class TextEncoder(nn.Module):
-    def __init__(self, vocab_size, embed_dim=256, hidden_dim=512, encoder_type='transformer'):
+    def __init__(self, vocab_size, embed_dim=256, hidden_dim=512, encoder_type='lstm'):
         """
         参数说明：
           - vocab_size: 词表大小
