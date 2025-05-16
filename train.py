@@ -12,6 +12,8 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
+import matplotlib.pyplot as plt
+
 #供同学们参考
 
 def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)):
@@ -138,6 +140,9 @@ def main():
     
     best_val_loss = float('inf')
     epochs = 40
+    train_losses = []
+    test_losses = []
+
     for epoch in range(epochs):
         img_encoder.train()
         txt_encoder.train()
@@ -158,18 +163,17 @@ def main():
             epoch_loss += loss.item()
         
         avg_train_loss = epoch_loss / len(train_dataloader)
-
-        # 计算验证集损失
-        val_loss = evaluate(img_encoder, txt_encoder, val_dataloader, device)
+        train_losses.append(avg_train_loss)
 
         # 计算测试集损失
         test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
+        test_losses.append(test_loss)
 
-        print(f"Epoch [{epoch+1}/{epochs}]: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Test Loss: {test_loss:.4f}")
+        print(f"Epoch [{epoch+1}/{epochs}]: Train Loss: {avg_train_loss:.4f} | Test Loss: {test_loss:.4f}")
         
         # 如果验证集有改善，则保存最佳模型
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if test_loss < best_val_loss:
+            best_val_loss = test_loss
             checkpoint = {
                 'epoch': epoch + 1,
                 'img_encoder_state_dict': img_encoder.state_dict(),
@@ -183,6 +187,37 @@ def main():
     # 训练完成，最终在测试集上评估
     final_test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
     print(f"Final Test Loss: {final_test_loss:.4f}")
+
+    # 绘制训练和测试损失在同一幅图
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(test_losses, label='Test Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Train and Test Loss')
+    plt.legend()
+    plt.savefig('train_and_test_loss.png')
+    plt.close()
+
+    # 绘制训练损失图
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Train Loss', color='blue')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Train Loss')
+    plt.legend()
+    plt.savefig('train_loss.png')
+    plt.close()
+
+    # 绘制测试损失图
+    plt.figure(figsize=(10, 5))
+    plt.plot(test_losses, label='Test Loss', color='orange')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Test Loss')
+    plt.legend()
+    plt.savefig('test_loss.png')
+    plt.close()
 
 if __name__ == "__main__":
     main()
