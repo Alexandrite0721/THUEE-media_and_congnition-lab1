@@ -139,7 +139,7 @@ def main():
     )
     
     best_val_loss = float('inf')
-    epochs = 40
+    epochs = 10
     train_losses = []
     test_losses = []
 
