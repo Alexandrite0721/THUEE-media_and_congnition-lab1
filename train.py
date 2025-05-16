@@ -142,6 +142,7 @@ def main():
     epochs = 40
     train_losses = []
     test_losses = []
+    val_losses = []
 
     for epoch in range(epochs):
         img_encoder.train()
@@ -165,15 +166,19 @@ def main():
         avg_train_loss = epoch_loss / len(train_dataloader)
         train_losses.append(avg_train_loss)
 
+        # 计算验证集损失
+        val_loss = evaluate(img_encoder, txt_encoder, val_dataloader, device)
+        val_losses.append(val_loss)
+
         # 计算测试集损失
         test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
         test_losses.append(test_loss)
 
-        print(f"Epoch [{epoch+1}/{epochs}]: Train Loss: {avg_train_loss:.4f} | Test Loss: {test_loss:.4f}")
+        print(f"Epoch [{epoch+1}/{epochs}]: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Test Loss: {test_loss:.4f}")
         
         # 如果验证集有改善，则保存最佳模型
-        if test_loss < best_val_loss:
-            best_val_loss = test_loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             checkpoint = {
                 'epoch': epoch + 1,
                 'img_encoder_state_dict': img_encoder.state_dict(),
@@ -188,17 +193,6 @@ def main():
     final_test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
     print(f"Final Test Loss: {final_test_loss:.4f}")
 
-    # 绘制训练和测试损失在同一幅图
-    plt.figure(figsize=(10, 5))
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(test_losses, label='Test Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Train and Test Loss')
-    plt.legend()
-    plt.savefig('train_and_test_loss.png')
-    plt.close()
-
     # 绘制训练损失图
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label='Train Loss', color='blue')
@@ -209,6 +203,16 @@ def main():
     plt.savefig('train_loss.png')
     plt.close()
 
+    # 绘制验证损失图
+    plt.figure(figsize=(10, 5))
+    plt.plot(val_losses, label='Val Loss', color='green')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Validation Loss')
+    plt.legend()
+    plt.savefig('val_loss.png')
+    plt.close()
+
     # 绘制测试损失图
     plt.figure(figsize=(10, 5))
     plt.plot(test_losses, label='Test Loss', color='orange')
@@ -217,6 +221,18 @@ def main():
     plt.title('Test Loss')
     plt.legend()
     plt.savefig('test_loss.png')
+    plt.close()
+
+    # 绘制三种损失在同一幅图中的曲线
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Train Loss', color='blue')
+    plt.plot(val_losses, label='Val Loss', color='green')
+    plt.plot(test_losses, label='Test Loss', color='orange')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Train, Validation and Test Loss')
+    plt.legend()
+    plt.savefig('all_losses.png')
     plt.close()
 
 if __name__ == "__main__":
