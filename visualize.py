@@ -1,26 +1,50 @@
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchvision import transforms
-from PIL import Image
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-import numpy as np
 from models.image_encoder import ImageEncoder
 from models.text_encoder import TextEncoder
-from utils import SimpleTokenizer
 from data_loader import Flickr8kDataset
+from utils import SimpleTokenizer
+import torch.nn.functional as F
+from tqdm import tqdm
+import numpy as np
+import matplotlib.pyplot as plt
+import os
 
-def load_best_model(checkpoint_path, vocab_size, embed_dim, device):
-    # 加载保存的模型
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+# 加载模型和数据
+def load_model_and_data(checkpoint_path, token_file, train_token_file, val_token_file, test_token_file):
+    # 加载检查点
+    checkpoint = torch.load(checkpoint_path)
+
+    # 读取所有 caption 用于构建总词表
+    with open(token_file, 'r', encoding="utf-8") as f:
+        lines = f.readlines()
+    captions = [line.strip().split(',')[1] for line in lines if line.strip()]
+
+    # 构建统一的 tokenizer
+    tokenizer = SimpleTokenizer(captions, min_freq=1)
+    vocab_size = len(tokenizer)
+
+    # 构建数据集与 DataLoader：测试集
+    test_dataset = Flickr8kDataset(
+        root_dir="Flickr8k/images",
+        captions_file=test_token_file,
+        tokenizer=tokenizer
+    )
+    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False)
+
+    # 构造模型（设定 embed_dim=256）
+    embed_dim = 256
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     img_encoder = ImageEncoder(embed_dim=embed_dim).to(device)
     txt_encoder = TextEncoder(vocab_size, embed_dim=embed_dim).to(device)
+
+    # 加载模型状态字典
     img_encoder.load_state_dict(checkpoint['img_encoder_state_dict'])
     txt_encoder.load_state_dict(checkpoint['txt_encoder_state_dict'])
-    tokenizer_vocab = checkpoint['tokenizer_vocab']
-    return img_encoder, txt_encoder, tokenizer_vocab
 
+    return img_encoder, txt_encoder, test_dataloader, tokenizer, device
+
+# 计算 Top-K 召回率
 def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)):
     img_encoder.eval()
     txt_encoder.eval()
@@ -50,10 +74,6 @@ def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)
     sim_matrix = torch.matmul(all_text_embeds, all_image_embeds.T)  # [N, N]
     txt2img_ranks = torch.argsort(sim_matrix, dim=1, descending=True)
 
-    # 图像 -> 文本检索
-    sim_matrix_T = sim_matrix.T  # [N, N]
-    img2txt_ranks = torch.argsort(sim_matrix_T, dim=1, descending=True)
-
     def recall_at_k(ranks, topk):
         recalls = []
         for k in topk:
@@ -62,78 +82,74 @@ def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)
         return recalls
 
     r_txt2img = recall_at_k(txt2img_ranks, topk)
-    r_img2txt = recall_at_k(img2txt_ranks, topk)
 
+    return r_txt2img
+
+# 文本 -> 图像 Top-K 检索示例的可视化
+def visualize_text_to_image_retrieval(img_encoder, txt_encoder, test_dataloader, tokenizer, device, query_caption, top_k=5):
+    img_encoder.eval()
+    txt_encoder.eval()
+
+    all_image_embeds = []
+    all_image_paths = []
+
+    with torch.no_grad():
+        for images, captions_ids, image_paths in tqdm(test_dataloader, desc="Extracting image embeddings"):
+            images = images.to(device)
+            image_embed = img_encoder(images)  # [1, dim]
+            all_image_embeds.append(image_embed.cpu())
+            all_image_paths.extend(image_paths)
+
+    all_image_embeds = torch.cat(all_image_embeds, dim=0)  # [N, D]
+    all_image_embeds = F.normalize(all_image_embeds, dim=1)
+
+    # 对查询文本进行编码
+    query_tokens = tokenizer.encode(query_caption)
+    query_tensor = torch.tensor(query_tokens).unsqueeze(0).to(device)
+    with torch.no_grad():
+        query_embed = txt_encoder(query_tensor)
+        query_embed = F.normalize(query_embed, dim=1).cpu()
+
+    # 计算相似度
+    sim_scores = torch.matmul(query_embed, all_image_embeds.T).squeeze()
+    top_k_indices = torch.argsort(sim_scores, descending=True)[:top_k]
+
+    # 可视化结果
+    plt.figure(figsize=(15, 3))
+    for i, idx in enumerate(top_k_indices):
+        img_path = all_image_paths[idx]
+        img = plt.imread(img_path)
+        plt.subplot(1, top_k, i + 1)
+        plt.imshow(img)
+        plt.axis('off')
+        plt.title(f"Top-{i + 1}")
+
+    plt.suptitle(f"Query: {query_caption}")
+    plt.show()
+
+def main():
+    checkpoint_path = "best_clip_model.pth"
+    token_file = "Flickr8k/captions.txt"
+    train_token_file = "Flickr8k/train_captions.txt"
+    val_token_file = "Flickr8k/val_captions.txt"
+    test_token_file = "Flickr8k/test_captions.txt"
+
+    img_encoder, txt_encoder, test_dataloader, tokenizer, device = load_model_and_data(
+        checkpoint_path, token_file, train_token_file, val_token_file, test_token_file
+    )
+
+    # 计算 Top-K 召回率
+    topk = (1, 5, 10)
+    r_txt2img = evaluate_top_k(img_encoder, txt_encoder, test_dataloader, device, topk)
+
+    # 列出模型训练结束后的性能指标
     print("\n📈 Text → Image Retrieval:")
     for i, k in enumerate(topk):
         print(f"Recall@{k}: {r_txt2img[i]*100:.2f}%")
 
-    print("\n📈 Image → Text Retrieval:")
-    for i, k in enumerate(topk):
-        print(f"Recall@{k}: {r_img2txt[i]*100:.2f}%")
-
-    return r_txt2img, r_img2txt
-
-def visualize_top_k(img_encoder, txt_encoder, tokenizer, query_caption, dataset, device, top_k=5):
-    img_encoder.eval()
-    txt_encoder.eval()
-
-    # 将查询文本转换为嵌入
-    tokens = tokenizer.encode(query_caption)
-    tokens = torch.tensor(tokens).unsqueeze(0).to(device)  # [1, T]
-    with torch.no_grad():
-        text_embed = txt_encoder(tokens)  # [1, embed_dim]
-        text_embed = F.normalize(text_embed, dim=1)
-
-    # 提取所有图像嵌入
-    all_image_embeds = []
-    all_images = []
-    transform = transforms.ToTensor()
-    with torch.no_grad():
-        for img_path, _ in dataset:
-            image = Image.open(img_path).convert("RGB")
-            image_tensor = transform(image).unsqueeze(0).to(device)
-            image_embed = img_encoder(image_tensor)  # [1, embed_dim]
-            image_embed = F.normalize(image_embed, dim=1)
-            all_image_embeds.append(image_embed.cpu())
-            all_images.append(image)
-
-    all_image_embeds = torch.cat(all_image_embeds, dim=0)  # [N, embed_dim]
-
-    # 计算相似度
-    sim_scores = torch.matmul(text_embed, all_image_embeds.T).squeeze(0)  # [N]
-    top_k_indices = torch.argsort(sim_scores, descending=True)[:top_k]
-
-    # 可视化结果
-    plt.figure(figsize=(15, 5))
-    plt.suptitle(f"Query: {query_caption}", fontsize=16)
-    for i, idx in enumerate(top_k_indices):
-        plt.subplot(1, top_k, i + 1)
-        plt.imshow(all_images[idx])
-        plt.axis("off")
-        plt.title(f"Rank {i+1}")
-    plt.show()
+    # 文本 -> 图像 Top-K 检索示例的可视化
+    query_caption = "A little girl covered in paint"
+    visualize_text_to_image_retrieval(img_encoder, txt_encoder, test_dataloader, tokenizer, device, query_caption, top_k=5)
 
 if __name__ == "__main__":
-    # 加载设备
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # 加载最佳模型
-    checkpoint_path = "best_clip_model.pth"
-    vocab_size = 10000  # 假设词表大小
-    embed_dim = 256
-    img_encoder, txt_encoder, tokenizer_vocab = load_best_model(checkpoint_path, vocab_size, embed_dim, device)
-
-    # 构建 tokenizer 和数据集
-    tokenizer = SimpleTokenizer(vocab=tokenizer_vocab)
-    dataset = Flickr8kDataset(root_dir="Flickr8k/images", captions_file="Flickr8k/test_captions.txt", tokenizer=tokenizer)
-
-    # 构建 DataLoader
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
-
-    # 计算性能指标
-    evaluate_top_k(img_encoder, txt_encoder, dataloader, device)
-
-    # 可视化 Top-K 检索结果
-    query_caption = "A little girl covered in paint"
-    visualize_top_k(img_encoder, txt_encoder, tokenizer, query_caption, dataset, device, top_k=5)
+    main()
