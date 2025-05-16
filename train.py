@@ -14,28 +14,6 @@ from tqdm import tqdm
 import numpy as np
 #供同学们参考
 
-def evaluate(img_encoder, txt_encoder, dataloader, device):
-    img_encoder.eval()
-    txt_encoder.eval()
-    total_loss = 0.0
-
-    with torch.no_grad():
-        for images, captions_ids in tqdm(dataloader, desc="Evaluating"):
-            images = images.to(device)
-            captions_ids = captions_ids.to(device)
-
-            # 获取图像和文本的嵌入
-            image_embeds = img_encoder(images)  # [batch, embed_dim]
-            text_embeds = txt_encoder(captions_ids)  # [batch, embed_dim]
-
-            # 计算对比损失
-            loss = contrastive_loss(image_embeds, text_embeds)
-            total_loss += loss.item()
-
-    # 计算平均损失
-    avg_loss = total_loss / len(dataloader)
-    return avg_loss
-
 def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)):
     img_encoder.eval()
     txt_encoder.eval()
@@ -85,6 +63,25 @@ def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)
 
 
     return r_txt2img, r_img2txt
+
+# 实现 evaluate 函数
+def evaluate(img_encoder, txt_encoder, dataloader, device):
+    img_encoder.eval()
+    txt_encoder.eval()
+    total_loss = 0.0
+
+    with torch.no_grad():
+        for images, captions_ids in tqdm(dataloader, desc="Evaluating"):
+            images = images.to(device)
+            captions_ids = captions_ids.to(device)
+
+            image_embeds = img_encoder(images)
+            text_embeds = txt_encoder(captions_ids)
+            loss = contrastive_loss(image_embeds, text_embeds)
+            total_loss += loss.item()
+
+    avg_loss = total_loss / len(dataloader)
+    return avg_loss
 
 def main():
     # 设备设置
@@ -161,26 +158,27 @@ def main():
             epoch_loss += loss.item()
         
         avg_train_loss = epoch_loss / len(train_dataloader)
+
         # 计算验证集损失
         val_loss = evaluate(img_encoder, txt_encoder, val_dataloader, device)
 
         # 计算测试集损失
         test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
-       
-        
+
         print(f"Epoch [{epoch+1}/{epochs}]: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Test Loss: {test_loss:.4f}")
         
-        # 如果验证集有改善，则保存最佳模型，这里需要同学们自己选择评估标准
-    
-        checkpoint = {
-            'epoch': epoch + 1,
-            'img_encoder_state_dict': img_encoder.state_dict(),
-            'txt_encoder_state_dict': txt_encoder.state_dict(),
-            'tokenizer_vocab': tokenizer.word2idx,
-            'best_val_loss': best_val_loss
-        }
-        torch.save(checkpoint, "best_clip_model.pth")
-        print(f"    > Best model updated at epoch {epoch+1} ")
+        # 如果验证集有改善，则保存最佳模型
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            checkpoint = {
+                'epoch': epoch + 1,
+                'img_encoder_state_dict': img_encoder.state_dict(),
+                'txt_encoder_state_dict': txt_encoder.state_dict(),
+                'tokenizer_vocab': tokenizer.word2idx,
+                'best_val_loss': best_val_loss
+            }
+            torch.save(checkpoint, "best_clip_model.pth")
+            print(f"    > Best model updated at epoch {epoch+1} ")
     
     # 训练完成，最终在测试集上评估
     final_test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
