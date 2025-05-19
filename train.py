@@ -66,7 +66,6 @@ def evaluate_top_k(img_encoder, txt_encoder, dataloader, device, topk=(1, 5, 10)
 
     return r_txt2img, r_img2txt
 
-# 实现 evaluate 函数
 def evaluate(img_encoder, txt_encoder, dataloader, device):
     img_encoder.eval()
     txt_encoder.eval()
@@ -124,8 +123,8 @@ def main():
     
     train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4, drop_last=True)
     # 为保证评估稳定，每个 batch 使用 batch_size=1
-    val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4, drop_last=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4, drop_last=False)
     
     # 构造模型（设定 embed_dim=256）
     embed_dim = 256
@@ -139,7 +138,7 @@ def main():
     )
     
     best_val_loss = float('inf')
-    epochs = 10
+    epochs = 40
     train_losses = []
     test_losses = []
     val_losses = []
