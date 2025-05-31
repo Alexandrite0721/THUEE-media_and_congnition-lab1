@@ -3,3 +3,4 @@ __pycache__
 .idea
 .venv
 Flickr8k/
+best_clip_model.pth
