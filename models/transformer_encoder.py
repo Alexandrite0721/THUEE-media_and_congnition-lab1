@@ -26,31 +26,38 @@ class MultiHeadSelfAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
         self.qkv_proj = nn.Linear(embed_dim, embed_dim * 3)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
-    #请完成forward函数
+        
     def forward(self, x, mask=None):
         # x: [B, T, D]，D=embed_dim
         B, T, D = x.size()
 
         # 计算 Q, K, V 矩阵
         qkv = self.qkv_proj(x)  # [B, T, 3 * D]
-        qkv = qkv.view(B, T, self.num_heads, 3 * self.head_dim).permute(2, 0, 1, 3)  # [num_heads, B, T, 3 * head_dim]
-        q, k, v = torch.split(qkv, self.head_dim, dim=-1)  # 分割为 Q, K, V，形状均为 [num_heads, B, T, head_dim]
-
+        
+        # 改变维度顺序，将batch放在前面
+        qkv = qkv.reshape(B, T, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, num_heads, T, head_dim]
+        q, k, v = qkv  # 每个形状为 [B, num_heads, T, head_dim]
+        
         # 计算注意力分数
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)  # [num_heads, B, T, T]
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)  # [B, num_heads, T, T]
+        
         if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))  # 应用 mask
-        attn_weights = torch.softmax(scores, dim=-1)  # [num_heads, B, T, T]
-
+            # 调整mask形状以匹配scores
+            # mask形状: [B, 1, 1, T] -> 需要广播到 [B, num_heads, T, T]
+            scores = scores.masked_fill(mask == 0, float('-inf'))
+            
+        attn_weights = torch.softmax(scores, dim=-1)  # [B, num_heads, T, T]
+        
         # 计算注意力输出
-        attn_output = torch.matmul(attn_weights, v)  # [num_heads, B, T, head_dim]
-        attn_output = attn_output.permute(1, 2, 0, 3).contiguous().view(B, T, D)  # [B, T, D]
-
-        # 通过输出投影层输出结果
+        attn_output = torch.matmul(attn_weights, v)  # [B, num_heads, T, head_dim]
+        attn_output = attn_output.permute(0, 2, 1, 3).contiguous().view(B, T, D)  # [B, T, D]
+        
+        # 通过输出投影层
         return self.out_proj(attn_output)
 
 class TransformerBlock(nn.Module):
-    def __init__(self, embed_dim, num_heads):
+    def __init__(self, embed_dim, num_heads, dropout=0.1):
         super().__init__()
         self.attn = MultiHeadSelfAttention(embed_dim, num_heads)
         self.ln1 = nn.LayerNorm(embed_dim)
@@ -58,14 +65,16 @@ class TransformerBlock(nn.Module):
         self.ff = nn.Sequential(
             nn.Linear(embed_dim, embed_dim * 4),
             nn.ReLU(),
-            nn.Linear(embed_dim * 4, embed_dim)
+            nn.Dropout(dropout),
+            nn.Linear(embed_dim * 4, embed_dim),
+            nn.Dropout(dropout)
         )
         self.ln2 = nn.LayerNorm(embed_dim)
-    
+        self.dropout = nn.Dropout(dropout)
     def forward(self, x, mask=None):
         # 残差连接：先 LayerNorm，再 MultiHeadSelfAttention，再加上输入
         # 计算自注意力块输出，并加上原输入，实现残差连接
-        x = x + self.attn(self.ln1(x), mask)
+        x = x + self.dropout(self.attn(self.ln1(x), mask))
         # 同理，对于前馈网络：先 LayerNorm，再前馈计算，再加上输入
         # 计算前馈网络输出，并加上残差
         x = x + self.ff(self.ln2(x))
@@ -84,23 +93,17 @@ class TransformerTextEncoder(nn.Module):
     #请完成forward函数   
     def forward(self, captions):
         # captions: [B, T]
-        # 通过嵌入层获取输入嵌入
         x = self.embedding(captions)  # [B, T, embed_dim]
+        x = self.pos_encoder(x)       # [B, T, embed_dim]
 
-        # 添加位置编码
-        x = self.pos_encoder(x)  # [B, T, embed_dim]
-
-        # 通过 Transformer 层
+        # 构造padding mask: [B, 1, 1, T]，1表示有效，0表示padding
+        mask = (captions != self.embedding.padding_idx).unsqueeze(1).unsqueeze(2)  # [B,1,1,T]
         for layer in self.layers:
-            x = layer(x)  # [B, T, embed_dim]
-
-        # 取序列的第一个时间步（或平均池化）作为句子表示
-        x = x.mean(dim=1)  # [B, embed_dim]
-
-        # 通过全连接层映射到目标空间
-        out = self.fc(x)  # [B, embed_dim]
-
-        # 对输出结果进行 L2 正则化
+            x = layer(x, mask=mask)
+        # 只对有效token做平均池化
+        mask_float = (captions != self.embedding.padding_idx).float()  # [B, T]
+        x = (x * mask_float.unsqueeze(-1)).sum(dim=1) / mask_float.sum(dim=1, keepdim=True)  # [B, embed_dim]
+        out = self.fc(x)
         return F.normalize(out, p=2, dim=1)
 
 # ----- 测试单元 -----

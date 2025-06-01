@@ -142,6 +142,9 @@ def main():
     train_losses = []
     test_losses = []
     val_losses = []
+    
+    # 加入学习率调度器
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     for epoch in range(epochs):
         img_encoder.train()
@@ -187,6 +190,8 @@ def main():
             }
             torch.save(checkpoint, "best_clip_model.pth")
             print(f"    > Best model updated at epoch {epoch+1} ")
+        
+        scheduler.step()
     
     # 训练完成，最终在测试集上评估
     final_test_loss = evaluate(img_encoder, txt_encoder, test_dataloader, device)
